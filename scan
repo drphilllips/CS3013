@@ -1,0 +1,70 @@
+#include <assert.h>
+#include <stdio.h>
+#include <math.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_LINE_SIZE 256
+
+int chunk_size = 0;
+int* input;
+
+void read_input_vector(const char* filename, int n, int* array)
+{
+  FILE *fp;
+  char *line = malloc(MAX_LINE_SIZE+1);
+  size_t len = MAX_LINE_SIZE;
+  ssize_t read;
+
+  fp = strcmp(filename, "-") ? fopen(filename, "r") : stdin;
+
+  assert(fp != NULL && line != NULL);
+
+  int index = 0;
+
+  while ((read = getline(&line, &len, fp)) != -1)
+  {
+    array[index] = atoi(line);
+    index++;
+  }
+
+  free(line);
+  fclose(fp);
+}
+
+void* sum_chunk(void* start)
+{
+	//thread enters sum_chunk, computes prefix sum for chunk, then waits for left-adjacent chunk to finish
+	//once left-adjacent finishes, add summed value of leftmost index in adjacent chunk to all indices in current chunk
+	int* beg = (int*)start;
+	for(int i=*(beg); i < chunk_size; i++) 
+	{
+    		input[*beg] += input[*beg - 1]; 
+  	}
+  	pthread_exit(0);		
+}
+
+int main(int argc, char* argv[])
+{
+	assert(argc == 4);
+	char* filename = argv[1];
+	int n = atoi(argv[2]);     //size of input vector
+	int thrds = atoi(argv[3]); //number of threads to use in computation
+	
+	input = (int*) malloc(sizeof(int) * n);
+  	read_input_vector(filename, n, input);
+  	
+  	pthread_t p[thrds-1];
+  	for(int i = 0; i<thrds-1; i++)
+  	{
+  		pthread_create(&p[i], NULL, sum_chunk, i);
+  	}
+  	pthread_join(p, NULL);
+  	for (int i=0; i < n; i++) 
+  	{
+    		printf("%d\n", input[i]); 
+  	}
+  	return EXIT_SUCCESS;
+}	
