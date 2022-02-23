@@ -24,6 +24,8 @@ sem_t sem;
 
 int workl;
 
+int d = 0;
+
 void read_input_vector(const char* filename, int n, int* array)
 
 {
@@ -139,42 +141,44 @@ int main(int argc, char* argv[])
            
            //auxiliary array, flip between arrays on each d step, then you don't need conditional variable to check if previous chunk has been updated yet before summing (Horn 2005)
           seq = (int*) malloc(sizeof(int) * n); 
+          for(int i = 0; i<n; i++)
+          {
+          	seq[i] = 0;
+          }
            
-          //pthread_t thread[num_threads];
+          pthread_t** thread = (pthread_t**)malloc(sizeof(pthread_t*) * num_threads);//array of thread pointers
            
           int* workl = (int*)malloc(sizeof(int));
           *workl = n/num_threads;
           
-          step_arg_t* args = (step_arg_t*)malloc(sizeof(step_arg_t) * num_threads);
+          step_arg_t** args = (step_arg_t**)malloc(sizeof(step_arg_t*) * num_threads);
+          
+          //pthread_t tid1;
+          //pthread_t tid2;
 	  
 	  int d;
           for(d = 0; d < log2(n); d += 1) //input when %2 == 0, seq when %2 == 1
           {
-          	
-			step_arg_t* argN = &args[0];
-          		argN->end = *workl*0;//input index of end of chunk
+          	for(int i = 0; i<num_threads; i++)
+          	{
+          		thread[i] = (pthread_t*)malloc(sizeof(pthread_t));
+          		//initialize thread ptrs
+          		args[i] = (step_arg_t*)malloc(sizeof(step_arg_t));
+			step_arg_t* argN = args[i];
+          		argN->end = *workl*i;//input index of end of chunk
           		//printf("%d\n", argN->end);fflush(stdout);
           		argN->beg = argN->end + *workl - 1;//input index of beginning of chunk
           		//printf("%d\n", argN->beg);fflush(stdout);
           		argN->step = d;
           		//printf("%d\n", argN->step);fflush(stdout);
          		
-          		pthread_t tid1;
-          		pthread_create(&tid1, NULL, step_sum, (void*)argN);
-          		
-			step_arg_t* arg2 = &args[1];
-          		arg2->end = *workl*1;//input index of end of chunk
-          		//printf("%d\n", argN->end);fflush(stdout);
-          		arg2->beg = arg2->end + *workl - 1;//input index of beginning of chunk
-          		//printf("%d\n", argN->beg);fflush(stdout);
-          		arg2->step = d;
-          		//printf("%d\n", argN->step);fflush(stdout);
-         		
-          		pthread_t tid2;
-          		pthread_create(&tid2, NULL, step_sum, (void*)arg2);          		
-          		
-           		pthread_join(tid1, NULL);         		
-          		pthread_join(tid2, NULL);
+              		pthread_create(thread[i], NULL, step_sum, (void*)argN);          		
+          	}
+          	for(int i = 0;i<num_threads; i++)
+          	{
+          		pthread_join(*thread[i], NULL);
+          	}
+
           	//barrier, wait for all threads to complete
           	
           
