@@ -1,107 +1,53 @@
 #include <assert.h>
-
 #include <stdio.h>
-
 #include <math.h>
-
 #include <pthread.h>
-
 #include <semaphore.h>
-
 #include <stdlib.h>
-
 #include <string.h>
-
- 
 
 #define MAX_LINE_SIZE 256
 
 int* input;
-
 int* seq;
-
 sem_t sem;
-
 int workl;
-
 //int d = 0;
-
 int thrds_arrived = 0;
-
 int num_threads;
-
 int n;
-
 int log_size = 0;
 
 sem_t phase1;
-
-
 sem_t phase2;
-
-
 sem_t lock;
 
-
 void read_input_vector(const char* filename, int n, int* array)
-
 {
-
            FILE *fp;
-
            char *line = malloc(MAX_LINE_SIZE+1);
-
            size_t len = MAX_LINE_SIZE;
-
            ssize_t read;
-
- 
-
            fp = strcmp(filename, "-") ? fopen(filename, "r") : stdin;
-
- 
-
            assert(fp != NULL && line != NULL);
 
- 
-
            int index = 0;
-
- 
-
            while ((read = getline(&line, &len, fp)) != -1)
-
            {
-
            array[index] = atoi(line);
-
            index++;
-
            }
 
- 
-
            free(line);
-
            fclose(fp);
-
 }
 
- 
-
 typedef struct __step_arg_t {
-
            //int dst; // distance between "neighbors"
-
            int beg; // first operation
-
            int end; // final operation
-           
            //int step; //d
-
 } step_arg_t;
-
- 
 
 void* step_sum(void* step_args)
 {
@@ -178,13 +124,8 @@ int main(int argc, char* argv[])
 
            num_threads = atoi(argv[3]);
 
- 
-
            if (n < 2 || num_threads < 1)
-
                       exit(EXIT_FAILURE);
-
- 
 
            input = malloc(sizeof(int) * n);
 
