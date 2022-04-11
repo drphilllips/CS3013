@@ -1,85 +1,190 @@
-
-
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#include <sys/stat.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <time.h>
+#include <unistd.h>
 #include "goatmalloc.h"
 
 void* _arena_start = NULL;
-size_t _arena_size = -1;
+void* _arena_end = NULL;
+size_t a_size = -1;
 int _initialized = 0;
+node_t* head;
+int statusno = 0;
 
-extern int init(size_t size) {
-
-	_initialized = 0;
-
-	printf("Initializing Arena:\n");fflush(stdout);
-	
-	if ((int) size <= 0) {
+extern int init(size_t size)
+{
+	if((int)size <= 0)
+	{
+		//perror("attempted size is negative\n");
 		return ERR_BAD_ARGUMENTS;
 	}
-	
-	printf("...requested size %zu bytes\n", size);fflush(stdout);
-	const int page_size = getpagesize(); // 4096
-	printf("...page size is %d bytes\n", page_size);fflush(stdout);
-	printf("...adjusting size with page boundaries\n");fflush(stdout);
-	_arena_size = page_size;
-	while (_arena_size < size)
-		_arena_size += page_size;
-	printf("...adjusted size is %zu bytes\n", _arena_size);fflush(stdout);
-	printf("...mapping arena with mmap()\n");fflush(stdout);
-	
-	int fd = open("/dev/zero", O_RDWR);
-	
-	if (fd == -1) {
-		perror("...failed in initialization, open");
-		return ERR_SYSCALL_FAILED;
+	else
+	{
+		printf("...requested size %d bytes\n", (int)size);fflush(stdout);
+		int p_size = getpagesize();
+		printf("...pagesize is %d bytes\n", (int)p_size);fflush(stdout);
+		if(size < p_size) size = p_size;
+		else if(size > p_size)
+		{
+			int diff = size%p_size;
+			size += p_size - diff;
+		}
+		printf("...adjusting size with page boundaries\n...adjusted size is %d bytes\n", (int)size);fflush(stdout);
+		int fd = open("/dev/zero", O_RDWR);
+		if(fd == -1)
+		{
+			perror("file init failed\n");
+			return ERR_SYSCALL_FAILED;
+		}
+		_arena_start = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+		if(_arena_start == MAP_FAILED)
+		{
+			perror("map init failed\n");
+			return ERR_SYSCALL_FAILED;
+		}
+		printf("...mapping arena with mmap\narena starts at %p\n", _arena_start);fflush(stdout);
+		printf("...arena ends at %p\n", _arena_start + size);fflush(stdout);
+		_arena_end = _arena_start + size;
+		_initialized = 1;
+		
+		//initialize chunk list
+		head = (node_t*)_arena_start;
+		head->size = size - sizeof(node_t);
+		head->is_free = 1;
+		head->fwd = NULL;
+		head->bwd = NULL;
+		printf("... initializing chunk list, header is at %p, free space starts at %p\n", head, (void*)head + sizeof(node_t));fflush(stdout);
 	}
-	
-	_arena_start = mmap(NULL, _arena_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-	
-	if (_arena_start == MAP_FAILED) {
-		perror("...failed in initialization, mmap");
-		return ERR_SYSCALL_FAILED;
-	}
-	
-	printf("...arena starts at %p\n", _arena_start);fflush(stdout);
-	printf("...arena ends at %p\n", _arena_start + _arena_size);fflush(stdout);
-	printf("...initializing header for initial free chunk\n");fflush(stdout);
-	int header_size = 32;
-	// TODO: initialize headers
-	
-	printf("...header size is %d bytes\n", header_size);
-	
-	_initialized = 1;
-	return _arena_size;
+	return size;
 }
 
-extern int destroy() {
-
-	printf("Destroying Arena:\n");fflush(stdout);
-
-	if (!_initialized) {
+extern int destroy()
+{
+	printf("...unmapping arena with munmap()\n");fflush(stdout);
+	size_t length =  _arena_end - _arena_start;
+	if(_initialized == 0)
+	{
+		//perror("arena unitialized\n");
 		return ERR_UNINITIALIZED;
 	}
-
-	printf("...unmapping arena with munmap()\n");fflush(stdout);
-	if (_arena_start != NULL && _arena_size > 0) {
-		munmap(_arena_start, _arena_size);
-		_arena_start = NULL;
+	else
+	{
+		munmap(_arena_start, length);
+		_arena_start = 0;
+		_arena_end = 0;
+		_initialized = 0;
+		return 0;
 	}
-	
-	return 0;
 }
-/*
-int main(int argc, char* argv[]) {
-	init(-1);
-	destroy();
-	return 0;
+
+extern void* walloc(size_t size)
+{
+	void* buf;//point to beginning of allocated space
+	if(_initialized == 0)
+	{
+		statusno = ERR_UNINITIALIZED;
+		return NULL;
+	}
+	//find chunk
+	node_t* tmp = head;//TODO head is NULL, need to debug
+	printf("search size = %d\n", (int)size);fflush(stdout);
+	int found = 0;
+	while(!found && tmp != NULL)
+	{
+		printf("...tmp is chunk at %p\n", tmp);fflush(stdout);
+		printf("tmp size = %d\n", (int)tmp->size);fflush(stdout);
+		if(tmp->size >= size && tmp->is_free == 1)
+		{
+			found = 1;
+		}
+		else tmp = tmp->fwd;
+	}
+	//tmp will point to free chunk if available
+	if(tmp == NULL) //reached end of arena, no free chunk big enough
+	{
+		printf("..tmp is null\n");fflush(stdout);
+		statusno = ERR_OUT_OF_MEMORY;
+		return NULL;
+	}
+	else
+	{
+		//have found free chunk big enough for allocation + header
+		size_t old_size = tmp->size;
+		buf = tmp + 1;//buff points to free mem
+		printf("...beginning of free space is at %p\n", buf);fflush(stdout);
+		if(tmp->size > size + sizeof(node_t) + 1)
+		{
+			tmp->size = size;
+			printf("...new size is %d bytes\n", (int)tmp->size);fflush(stdout);
+			tmp->is_free = 0;
+			if(buf + size < _arena_end)
+			{
+				tmp->fwd = buf + size;
+				node_t* nxt = tmp->fwd;
+				printf("...next chunk is at %p\n", nxt);fflush(stdout);
+				nxt->is_free = 1;
+				nxt->bwd = tmp;
+				nxt->size = old_size - tmp->size - sizeof(node_t);
+			}	
+		}
+		else
+		{
+			printf("...new size is %d bytes\n", (int)tmp->size);fflush(stdout);
+			tmp->is_free = 0;
+
+		}
+	}
+	return buf;
 }
-*/
 
-
+void wfree(void* ptr)
+{
+	printf("...given ptr %p\n", ptr);fflush(stdout);
+	node_t* header = ptr - sizeof(node_t);
+	printf("...header begins at %p\n", header);fflush(stdout);
+	header->is_free = 1;
+	if(header->fwd != NULL)
+	{
+		if(header->fwd->is_free == 1)
+		{
+			printf("...coalescing\n");fflush(stdout);
+			header->size += header->fwd->size + sizeof(node_t);
+			printf("...new size is %d\n", (int)header->size);fflush(stdout);
+			if(header->fwd->fwd != NULL)
+			{
+				header->fwd->fwd->bwd = header;
+				header->fwd = header->fwd->fwd;
+			}
+			else
+			{
+				header->fwd = NULL;
+			}
+		}
+	}
+	if(header->bwd != NULL)
+	{
+		if(header->bwd->is_free == 1)
+		{
+			printf("...coalescing backwards\n");fflush(stdout);
+			header->bwd->size += header->size + sizeof(node_t);
+			printf("...new size is %d\n", (int)header->bwd->size);fflush(stdout);
+			if(header->fwd != NULL)
+			{
+				header->fwd->bwd = header->bwd;
+				header->bwd->fwd = header->fwd;
+			}
+			else
+			{
+				header->bwd->fwd = NULL;
+			}
+		}
+	}
+	else
+	{
+		printf("...no coalescing needed\n");fflush(stdout);
+	}
+}
